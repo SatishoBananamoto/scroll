@@ -247,3 +247,73 @@ def stats(ctx):
     click.echo("Top tags:")
     for t, count in top_tags:
         click.echo(f"  {t}: {count}")
+
+
+@cli.command()
+@click.option("--format", "-f", "fmt",
+              type=click.Choice(["claude-md", "json", "summary"]),
+              default="claude-md", help="Export format")
+@click.option("--output", "-o", type=click.Path(), default=None,
+              help="Write to file instead of stdout")
+@click.pass_context
+def export(ctx, fmt, output):
+    """Export knowledge for agent context injection."""
+    from scroll.export import export_claude_md, export_json, export_summary
+
+    scroll_dir = ctx.obj["scroll_dir"]
+    entries = load_entries(scroll_dir)
+
+    if not entries:
+        click.echo("No entries to export.")
+        return
+
+    project = None
+    projects = {e.project for e in entries if e.project}
+    if len(projects) == 1:
+        project = projects.pop()
+
+    if fmt == "claude-md":
+        result = export_claude_md(entries, project)
+    elif fmt == "json":
+        result = export_json(entries)
+    elif fmt == "summary":
+        result = export_summary(entries)
+    else:
+        click.echo(f"Unknown format: {fmt}")
+        return
+
+    if output:
+        Path(output).write_text(result, encoding="utf-8")
+        click.echo(f"Exported {len(entries)} entries to {output}")
+    else:
+        click.echo(result)
+
+
+@cli.command()
+@click.argument("task")
+@click.option("--top", "-k", default=5, help="Number of results")
+@click.pass_context
+def relevant(ctx, task, top):
+    """Find entries relevant to a task description."""
+    from scroll.relevance import find_relevant
+    from scroll.export import _extract_key_section
+
+    scroll_dir = ctx.obj["scroll_dir"]
+    entries = load_entries(scroll_dir)
+    results = find_relevant(entries, task, top_k=top)
+
+    if not results:
+        click.echo(f"No relevant entries for: '{task}'")
+        return
+
+    click.echo(f"Top {len(results)} entries for: '{task}'\n")
+    for entry, score in results:
+        tags = ", ".join(entry.tags[:5])
+        click.echo(f"  [{entry.id}] {entry.title}  (score: {score:.1f})")
+        click.echo(f"      type={entry.type}  tags=[{tags}]")
+
+        key = _extract_key_section(entry)
+        if key:
+            preview = key.split("\n")[0][:120].strip()
+            click.echo(f"      >> {preview}")
+        click.echo()
