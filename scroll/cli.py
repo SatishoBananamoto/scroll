@@ -317,3 +317,48 @@ def relevant(ctx, task, top):
             preview = key.split("\n")[0][:120].strip()
             click.echo(f"      >> {preview}")
         click.echo()
+
+
+@cli.command()
+@click.option("--target", "-t", multiple=True, default=["claude"],
+              help="Agent targets: claude, cursor, copilot (repeatable)")
+@click.option("--quiet", "-q", is_flag=True, help="Suppress output (for hooks)")
+@click.pass_context
+def sync(ctx, target, quiet):
+    """Sync knowledge into agent instruction files (CLAUDE.md, .cursorrules, etc.)."""
+    from scroll.sync import sync_to_agents
+
+    repo = ctx.obj["repo"]
+    scroll_dir = ctx.obj["scroll_dir"]
+
+    if not scroll_dir.exists():
+        if not quiet:
+            click.echo("Not initialized. Run 'scroll init' first.")
+        sys.exit(1)
+
+    results = sync_to_agents(repo, scroll_dir, list(target))
+
+    if not results:
+        if not quiet:
+            click.echo("No entries to sync.")
+        return
+
+    if not quiet:
+        for agent, path, action in results:
+            click.echo(f"  {agent}: {action} ({path})")
+
+
+@cli.command()
+@click.pass_context
+def hook(ctx):
+    """Install a post-commit git hook to auto-sync after each commit."""
+    from scroll.sync import setup_git_hook
+
+    repo = ctx.obj["repo"]
+    success, message = setup_git_hook(repo)
+
+    if success:
+        click.echo(f"Hook installed: {message}")
+        click.echo("Knowledge will auto-sync to CLAUDE.md after each commit.")
+    else:
+        click.echo(f"Not installed: {message}")
