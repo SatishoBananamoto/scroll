@@ -15,6 +15,8 @@ PREFIXES = {
     "goal": "GOL",
 }
 
+VALID_TYPES = set(PREFIXES.keys())
+VALID_CONFIDENCE = {"high", "medium", "low"}
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.+?)\n---\s*\n", re.DOTALL)
 
 
@@ -30,6 +32,75 @@ class ScrollEntry:
     confidence: str = "medium"
     source_commits: list[str] = field(default_factory=list)
     project: Optional[str] = None
+
+
+@dataclass
+class ValidationError:
+    field: str
+    message: str
+
+
+def validate_entry(raw: dict) -> list[ValidationError]:
+    """Validate an extracted entry dict before saving.
+
+    Returns list of errors. Empty list means valid.
+    """
+    errors = []
+
+    entry_type = raw.get("entry_type", "")
+    if entry_type not in VALID_TYPES:
+        errors.append(ValidationError("entry_type", f"Invalid type '{entry_type}'"))
+
+    title = raw.get("title", "")
+    if not title or not title.strip():
+        errors.append(ValidationError("title", "Title is empty"))
+
+    tags = raw.get("tags", [])
+    if not tags or not isinstance(tags, list):
+        errors.append(ValidationError("tags", "Tags must be a non-empty list"))
+
+    body = raw.get("body", "")
+    if not body or not body.strip():
+        errors.append(ValidationError("body", "Body is empty"))
+    elif "## " not in body:
+        errors.append(ValidationError("body", "Body has no section headers (## )"))
+
+    confidence = raw.get("confidence", "")
+    if confidence not in VALID_CONFIDENCE:
+        errors.append(ValidationError("confidence", f"Invalid confidence '{confidence}'"))
+
+    source_commits = raw.get("source_commits", [])
+    if not source_commits or not isinstance(source_commits, list):
+        errors.append(ValidationError("source_commits", "Must have at least one source commit"))
+
+    return errors
+
+
+def normalize_title(title: str) -> str:
+    """Normalize a title for dedup comparison."""
+    return re.sub(r"[^a-z0-9\s]", "", title.lower()).strip()
+
+
+def is_duplicate(raw: dict, existing_entries: list[ScrollEntry]) -> bool:
+    """Check if an extracted entry is a duplicate of an existing one."""
+    new_title = normalize_title(raw.get("title", ""))
+    if not new_title:
+        return False
+
+    for entry in existing_entries:
+        if normalize_title(entry.title) == new_title:
+            return True
+
+    # Also check source commit overlap — if all source commits already
+    # appear in an existing entry, likely duplicate
+    new_sources = set(raw.get("source_commits", []))
+    if new_sources:
+        for entry in existing_entries:
+            existing_sources = set(entry.source_commits)
+            if existing_sources and new_sources.issubset(existing_sources):
+                return True
+
+    return False
 
 
 def get_next_id(entries_dir: Path, entry_type: str) -> str:
@@ -72,15 +143,40 @@ def entry_to_markdown(entry: ScrollEntry) -> str:
     return "\n".join(lines) + "\n"
 
 
-def save_entries(entries: list[dict], scroll_dir: Path, project_name: str = None) -> list[ScrollEntry]:
-    """Save extracted entries to disk. Returns saved ScrollEntry objects."""
+def save_entries(
+    entries: list[dict],
+    scroll_dir: Path,
+    project_name: str = None,
+    existing: list[ScrollEntry] = None,
+) -> tuple[list[ScrollEntry], list[dict], list[dict]]:
+    """Save extracted entries to disk with validation and dedup.
+
+    Returns (saved, skipped_invalid, skipped_duplicate).
+    """
     entries_dir = scroll_dir / "entries"
     entries_dir.mkdir(parents=True, exist_ok=True)
 
+    if existing is None:
+        existing = load_entries(scroll_dir)
+
     today = date.today().isoformat()
     saved = []
+    skipped_invalid = []
+    skipped_duplicate = []
 
     for raw in entries:
+        # Validate
+        errors = validate_entry(raw)
+        if errors:
+            raw["_errors"] = [f"{e.field}: {e.message}" for e in errors]
+            skipped_invalid.append(raw)
+            continue
+
+        # Dedup
+        if is_duplicate(raw, existing):
+            skipped_duplicate.append(raw)
+            continue
+
         entry_type = raw["entry_type"]
         entry_id = get_next_id(entries_dir, entry_type)
 
@@ -100,8 +196,9 @@ def save_entries(entries: list[dict], scroll_dir: Path, project_name: str = None
         file_path = entries_dir / f"{entry_id}.md"
         file_path.write_text(md, encoding="utf-8")
         saved.append(entry)
+        existing.append(entry)  # Track for within-batch dedup
 
-    return saved
+    return saved, skipped_invalid, skipped_duplicate
 
 
 def load_entries(scroll_dir: Path) -> list[ScrollEntry]:
