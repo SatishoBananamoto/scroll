@@ -1,11 +1,11 @@
-"""LLM-powered knowledge extraction from git history."""
+"""LLM-powered knowledge extraction from git history, PRs, and issues."""
 
 import anthropic
 
 
 EXTRACTION_TOOL = {
     "name": "record_knowledge",
-    "description": "Record structured knowledge entries extracted from git history",
+    "description": "Record structured knowledge entries extracted from development history",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -38,7 +38,7 @@ EXTRACTION_TOOL = {
                         "source_commits": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Short hashes of commits this entry is derived from",
+                            "description": "Source references: commit short hashes, PR numbers (PR#42), or issue numbers (I#15)",
                         },
                     },
                     "required": ["entry_type", "title", "tags", "body", "confidence", "source_commits"],
@@ -50,7 +50,7 @@ EXTRACTION_TOOL = {
 }
 
 
-SYSTEM_PROMPT = """You are a knowledge extraction system. You analyze git commit history and extract structured knowledge entries.
+SYSTEM_PROMPT = """You are a knowledge extraction system. You analyze development history — git commits, pull requests, issues, and review comments — and extract structured knowledge entries.
 
 Entry types and their REQUIRED markdown sections:
 
@@ -70,32 +70,37 @@ Entry types and their REQUIRED markdown sections:
   Sections: ## Objective, ## Success Criteria, ## Current Status
 
 Rules:
-- NOT every commit has extractable knowledge. Skip trivial commits (typo fixes, formatting, version bumps) unless they form a pattern.
-- Synthesize across related commits. A series of commits implementing a feature should yield one or two entries, not one per commit.
+- NOT every item has extractable knowledge. Skip trivial commits, bot PRs, and low-signal items.
+- Synthesize across related items. Multiple commits in one PR should yield entries about the PR, not per-commit.
+- PR descriptions and review comments are the RICHEST source. Extract the reasoning, debates, and alternatives from them.
+- Review comments often contain rejected alternatives — capture these in the "Alternatives Considered" section.
+- Bug fix PRs and issues with resolution often contain mistake patterns — extract the root cause and prevention.
 - The body MUST use the required markdown sections for each type.
 - Tags should be lowercase, specific, and useful for filtering.
 - Be conservative: only extract knowledge that is genuinely useful. Quality over quantity.
-- Confidence: high = clear evidence in commits, medium = reasonable inference, low = speculative.
-- Source each entry to the specific commit short hash(es) it came from.
-- If there is no extractable knowledge in the batch, return an empty entries array."""
+- Confidence: high = explicit in the source, medium = reasonable inference, low = speculative.
+- Source references: use commit short hashes for commits, PR#N for pull requests, I#N for issues.
+- IMPORTANT: Only state facts that are explicitly present in or directly supported by the source material. Do NOT fabricate details, root causes, or prevention steps that aren't evidenced in the input.
+- If there is no extractable knowledge, return an empty entries array."""
 
 
-def extract_knowledge(commits_text: str, model: str = "claude-sonnet-4-6") -> list[dict]:
-    """Extract knowledge entries from formatted git commits.
+def extract_knowledge(source_text: str, model: str = "claude-sonnet-4-6") -> list[dict]:
+    """Extract knowledge entries from formatted development history.
 
-    Returns list of entry dicts with keys: entry_type, title, tags, body, confidence, source_commits.
+    source_text can contain commits, PRs, issues, or any mix.
+    Returns list of entry dicts.
     """
     client = anthropic.Anthropic()
 
     response = client.messages.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=8192,
         system=SYSTEM_PROMPT,
         tools=[EXTRACTION_TOOL],
         tool_choice={"type": "tool", "name": "record_knowledge"},
         messages=[{
             "role": "user",
-            "content": f"Extract knowledge from these git commits:\n\n{commits_text}",
+            "content": f"Extract knowledge from this development history:\n\n{source_text}",
         }],
     )
 

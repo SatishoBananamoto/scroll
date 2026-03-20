@@ -40,10 +40,14 @@ def init(ctx):
 @click.option("--batch-size", "-b", default=25, help="Commits per extraction batch")
 @click.option("--project", "-p", default=None, help="Project name tag")
 @click.option("--model", "-m", default="claude-sonnet-4-6", help="Model for extraction")
-@click.option("--full", is_flag=True, help="Ignore state, re-process all commits")
+@click.option("--full", is_flag=True, help="Ignore state, re-process all")
+@click.option("--github", is_flag=True, help="Also ingest PRs and issues from GitHub")
+@click.option("--github-only", is_flag=True, help="Only ingest from GitHub (skip git commits)")
+@click.option("--max-prs", default=50, help="Max PRs to analyze")
+@click.option("--max-issues", default=50, help="Max issues to analyze")
 @click.pass_context
-def ingest(ctx, max_commits, batch_size, project, model, full):
-    """Read git history and extract knowledge."""
+def ingest(ctx, max_commits, batch_size, project, model, full, github, github_only, max_prs, max_issues):
+    """Read git history (and optionally GitHub PRs/issues) and extract knowledge."""
     repo = ctx.obj["repo"]
     scroll_dir = ctx.obj["scroll_dir"]
 
@@ -54,7 +58,50 @@ def ingest(ctx, max_commits, batch_size, project, model, full):
     if not project:
         project = repo.name
 
-    # Incremental: check last processed commit
+    # Load existing entries once for dedup
+    existing = load_entries(scroll_dir)
+    total_saved = 0
+    total_invalid = 0
+    total_duplicate = 0
+    all_saved = []
+
+    # --- Git commits ---
+    if not github_only:
+        total_saved, total_invalid, total_duplicate, all_saved = _ingest_commits(
+            repo, scroll_dir, existing, project, model,
+            max_commits, batch_size, full,
+        )
+
+    # --- GitHub PRs and Issues ---
+    if github or github_only:
+        gh_saved, gh_invalid, gh_dup = _ingest_github(
+            repo, scroll_dir, existing, project, model,
+            max_prs, max_issues, full, batch_size,
+        )
+        total_saved += gh_saved
+        total_invalid += gh_invalid
+        total_duplicate += gh_dup
+
+    # Summary
+    click.echo()
+    if all_saved:
+        click.echo(f"Saved {total_saved} entries:")
+        for entry in all_saved:
+            click.echo(f"  [{entry.id}] {entry.title}")
+    elif total_saved:
+        click.echo(f"Saved {total_saved} entries total.")
+    if total_invalid:
+        click.echo(f"Skipped {total_invalid} invalid entries.")
+    if total_duplicate:
+        click.echo(f"Skipped {total_duplicate} duplicate entries.")
+    if not total_saved and not total_invalid and not total_duplicate:
+        click.echo("No knowledge extracted.")
+
+
+def _ingest_commits(repo, scroll_dir, existing, project, model, max_commits, batch_size, full):
+    """Ingest from git commit history. Returns (saved, invalid, duplicate, saved_entries)."""
+    from scroll.state import get_last_commit, get_processed_commits, update_state
+
     since_commit = None
     if not full:
         since_commit = get_last_commit(scroll_dir)
@@ -64,7 +111,6 @@ def ingest(ctx, max_commits, batch_size, project, model, full):
     click.echo(f"Reading git history ({max_commits} commits max)...")
     commits = read_git_log(repo, max_commits, since_commit=since_commit)
 
-    # Filter out already-processed commits
     if not full:
         processed = get_processed_commits(scroll_dir)
         before = len(commits)
@@ -75,27 +121,22 @@ def ingest(ctx, max_commits, batch_size, project, model, full):
     click.echo(f"Found {len(commits)} new commits.")
 
     if not commits:
-        click.echo("Nothing new to process.")
-        return
+        click.echo("Nothing new to process from git.")
+        return 0, 0, 0, []
 
-    # Load existing entries once for dedup
-    existing = load_entries(scroll_dir)
-
-    # Batch commits for extraction
     batches = []
-    batch_commits = []  # Track which commits are in each batch
+    batch_commits = []
     for i in range(0, len(commits), batch_size):
         batch = commits[i:i + batch_size]
         batches.append(format_commits_for_extraction(batch))
         batch_commits.append(batch)
 
-    click.echo(f"Extracting knowledge from {len(batches)} batch(es)...")
+    click.echo(f"Extracting knowledge from {len(batches)} commit batch(es)...")
 
     total_saved = 0
     total_invalid = 0
     total_duplicate = 0
     all_saved = []
-    last_successful_commit = None
 
     for i, batch_text in enumerate(batches):
         click.echo(f"  Batch {i + 1}/{len(batches)}...")
@@ -109,7 +150,6 @@ def ingest(ctx, max_commits, batch_size, project, model, full):
 
         click.echo(f"    -> {len(entries)} entries extracted")
 
-        # Save this batch immediately
         saved, invalid, duplicate = save_entries(entries, scroll_dir, project, existing)
         total_saved += len(saved)
         total_invalid += len(invalid)
@@ -121,24 +161,113 @@ def ingest(ctx, max_commits, batch_size, project, model, full):
         if duplicate:
             click.echo(f"    -> {len(duplicate)} skipped (duplicate)")
 
-        # Track processed commits for this batch
         batch_hashes = [c.hash for c in batch_commits[i]]
-        # The newest commit in this batch (commits are newest-first)
         last_successful_commit = batch_commits[i][0].hash
         update_state(scroll_dir, batch_hashes, last_successful_commit)
 
-    # Summary
-    click.echo()
-    if total_saved:
-        click.echo(f"Saved {total_saved} entries:")
-        for entry in all_saved:
-            click.echo(f"  [{entry.id}] {entry.title}")
-    if total_invalid:
-        click.echo(f"Skipped {total_invalid} invalid entries.")
-    if total_duplicate:
-        click.echo(f"Skipped {total_duplicate} duplicate entries.")
-    if not total_saved and not total_invalid and not total_duplicate:
-        click.echo("No knowledge extracted.")
+    return total_saved, total_invalid, total_duplicate, all_saved
+
+
+def _ingest_github(repo, scroll_dir, existing, project, model, max_prs, max_issues, full, batch_size):
+    """Ingest from GitHub PRs and issues. Returns (saved, invalid, duplicate)."""
+    from scroll.github_reader import (
+        check_gh_available, read_pull_requests, read_issues,
+        format_prs_for_extraction, format_issues_for_extraction,
+    )
+    from scroll.state import (
+        get_processed_prs, get_processed_issues,
+        update_state_prs, update_state_issues,
+    )
+
+    ok, msg = check_gh_available(repo)
+    if not ok:
+        click.echo(f"GitHub: {msg}")
+        return 0, 0, 0
+
+    total_saved = 0
+    total_invalid = 0
+    total_duplicate = 0
+
+    # --- PRs ---
+    click.echo(f"Reading GitHub PRs ({max_prs} max)...")
+    prs = read_pull_requests(repo, max_prs)
+
+    if not full:
+        processed_prs = get_processed_prs(scroll_dir)
+        before = len(prs)
+        prs = [pr for pr in prs if pr.number not in processed_prs]
+        if before != len(prs):
+            click.echo(f"Skipped {before - len(prs)} already-processed PRs.")
+
+    click.echo(f"Found {len(prs)} new PRs.")
+
+    if prs:
+        # Batch PRs (fewer per batch since they're larger)
+        pr_batch_size = max(1, batch_size // 5)
+        for i in range(0, len(prs), pr_batch_size):
+            batch = prs[i:i + pr_batch_size]
+            batch_text = format_prs_for_extraction(batch)
+            click.echo(f"  PR batch {i // pr_batch_size + 1}...")
+
+            try:
+                entries = extract_knowledge(batch_text, model=model)
+            except Exception as e:
+                click.echo(f"    !! PR extraction failed: {e}")
+                break
+
+            click.echo(f"    -> {len(entries)} entries extracted")
+
+            saved, invalid, duplicate = save_entries(entries, scroll_dir, project, existing)
+            total_saved += len(saved)
+            total_invalid += len(invalid)
+            total_duplicate += len(duplicate)
+
+            for s in saved:
+                click.echo(f"    [{s.id}] {s.title}")
+
+            update_state_prs(scroll_dir, [pr.number for pr in batch])
+
+    # --- Issues ---
+    click.echo(f"Reading GitHub issues ({max_issues} max)...")
+    issues = read_issues(repo, max_issues)
+
+    if not full:
+        processed_issues = get_processed_issues(scroll_dir)
+        before = len(issues)
+        issues = [i for i in issues if i.number not in processed_issues]
+        if before != len(issues):
+            click.echo(f"Skipped {before - len(issues)} already-processed issues.")
+
+    click.echo(f"Found {len(issues)} new issues.")
+
+    if issues:
+        issue_batch_size = max(1, batch_size // 5)
+        for i in range(0, len(issues), issue_batch_size):
+            batch = issues[i:i + issue_batch_size]
+            batch_text = format_issues_for_extraction(batch)
+            click.echo(f"  Issue batch {i // issue_batch_size + 1}...")
+
+            try:
+                entries = extract_knowledge(batch_text, model=model)
+            except Exception as e:
+                click.echo(f"    !! Issue extraction failed: {e}")
+                break
+
+            click.echo(f"    -> {len(entries)} entries extracted")
+
+            saved, invalid, duplicate = save_entries(entries, scroll_dir, project, existing)
+            total_saved += len(saved)
+            total_invalid += len(invalid)
+            total_duplicate += len(duplicate)
+
+            for s in saved:
+                click.echo(f"    [{s.id}] {s.title}")
+
+            update_state_issues(scroll_dir, [iss.number for iss in batch])
+
+    return total_saved, total_invalid, total_duplicate
+
+
 
 
 @cli.command("list")
