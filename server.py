@@ -242,5 +242,15 @@ def scroll_export(format: str = "claude-md") -> str:
         return f"Unknown format '{format}'. Use: claude-md, json, summary"
 
 
+
+@mcp.tool()
+def scroll_health() -> str:
+    """Check knowledge base health: staleness, missing sections, duplicates, coverage."""
+    from scroll.integrity import compute_health, render_health
+    entries = _load()
+    report = compute_health(entries)
+    return render_health(report)
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

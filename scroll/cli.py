@@ -491,3 +491,15 @@ def hook(ctx):
         click.echo("Knowledge will auto-sync to CLAUDE.md after each commit.")
     else:
         click.echo(f"Not installed: {message}")
+
+
+@cli.command()
+@click.pass_context
+def health(ctx):
+    """Check knowledge base health: staleness, missing sections, duplicates."""
+    from scroll.integrity import compute_health, render_health
+
+    scroll_dir = ctx.obj["scroll_dir"]
+    entries = load_entries(scroll_dir)
+    report = compute_health(entries)
+    click.echo(render_health(report))
