@@ -503,3 +503,48 @@ def health(ctx):
     entries = load_entries(scroll_dir)
     report = compute_health(entries)
     click.echo(render_health(report))
+
+
+@cli.command()
+@click.option("--engram-root", type=click.Path(), default=None,
+              help="Engram root directory (default: ~/engram)")
+@click.option("--dry-run", is_flag=True, help="Show what would be deposited without writing")
+@click.option("--project", "-p", default=None, help="Only deposit entries from this project")
+@click.pass_context
+def deposit(ctx, engram_root, dry_run, project):
+    """Deposit scroll entries into engram knowledge base.
+
+    Pushes extracted knowledge from scroll into engram, where it becomes
+    part of the cross-project knowledge graph. Tracks what was deposited
+    to prevent duplicates on re-runs.
+    """
+    from scroll.deposit import deposit as do_deposit, ENGRAM_DEFAULT_ROOT
+
+    scroll_dir = ctx.obj["scroll_dir"]
+
+    if not scroll_dir.exists():
+        click.echo("Not initialized. Run 'scroll init' first.")
+        sys.exit(1)
+
+    root = Path(engram_root) if engram_root else ENGRAM_DEFAULT_ROOT
+
+    if dry_run:
+        click.echo("DRY RUN — no files will be written.\n")
+
+    result = do_deposit(scroll_dir, engram_root=root, dry_run=dry_run, project_filter=project)
+
+    if result.errors:
+        for err in result.errors:
+            click.echo(f"ERROR: {err}")
+        sys.exit(1)
+
+    if result.deposited:
+        click.echo(f"Deposited {len(result.deposited)} entries into engram:")
+        for scroll_id, engram_id in result.deposited:
+            click.echo(f"  {scroll_id} → {engram_id}")
+
+    if result.skipped:
+        click.echo(f"Skipped {len(result.skipped)} already-deposited entries.")
+
+    if not result.deposited and not result.skipped:
+        click.echo("No scroll entries to deposit.")
