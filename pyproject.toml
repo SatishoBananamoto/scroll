@@ -1,9 +1,9 @@
 [build-system]
 requires = ["setuptools>=61.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
-name = "scroll"
+name = "git-scroll"
 version = "0.1.0"
 description = "Institutional memory, extracted from the work itself"
 requires-python = ">=3.10"
