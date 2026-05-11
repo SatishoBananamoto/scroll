@@ -11,7 +11,7 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from scroll.store import ScrollEntry, load_entries, PREFIXES
+from scroll.store import ScrollEntry, load_entries, PREFIXES, normalize_title
 
 
 ENGRAM_DEFAULT_ROOT = Path.home() / "engram"
@@ -24,6 +24,7 @@ class DepositResult:
     deposited: list[tuple[str, str]] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    quality_skipped: list[str] = field(default_factory=list)
 
 
 def load_deposit_state(scroll_dir: Path) -> dict[str, str]:
@@ -106,11 +107,55 @@ def render_engram_entry(entry: ScrollEntry, engram_id: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _word_set(title: str) -> set[str]:
+    """Normalize title to word set for duplicate detection."""
+    return set(normalize_title(title).split())
+
+
+def _check_duplicate(title: str, existing_titles: list[str],
+                     threshold: float = 0.70) -> Optional[str]:
+    """Check if title is a near-duplicate of any existing title.
+
+    Returns the matching title if found, None otherwise.
+    """
+    new_words = _word_set(title)
+    if len(new_words) < 3:
+        return None
+
+    for existing in existing_titles:
+        existing_words = _word_set(existing)
+        if len(existing_words) < 3:
+            continue
+        intersection = new_words & existing_words
+        union = new_words | existing_words
+        jaccard = len(intersection) / len(union) if union else 0
+        if jaccard >= threshold:
+            return existing
+
+    return None
+
+
+def _load_existing_titles(engram_entries: Path) -> list[str]:
+    """Load titles from existing engram entries for duplicate checking."""
+    titles = []
+    for f in engram_entries.glob("*.md"):
+        text = f.read_text(encoding="utf-8")
+        for line in text.split("\n"):
+            if line.startswith("# ") and not line.startswith("## "):
+                titles.append(line[2:].strip())
+                break
+    return titles
+
+
+MIN_BODY_WORDS = 20  # Entries shorter than this are likely trivia
+
+
 def deposit(
     scroll_dir: Path,
     engram_root: Path = None,
     dry_run: bool = False,
     project_filter: Optional[str] = None,
+    quality_check: bool = True,
 ) -> DepositResult:
     """Deposit scroll entries into engram.
 
@@ -123,6 +168,7 @@ def deposit(
         engram_root: Path to engram root (default: ~/engram)
         dry_run: If True, report what would happen without writing
         project_filter: Only deposit entries from this project
+        quality_check: Reject near-duplicate or too-short entries before writing
 
     Returns:
         DepositResult with lists of deposited, skipped, and errors.
@@ -160,10 +206,34 @@ def deposit(
 
     new_state = dict(state)
 
+    # Quality gate: load existing titles for duplicate checking
+    existing_titles = []
+    if quality_check:
+        existing_titles = _load_existing_titles(engram_entries)
+
     for entry in entries:
         # Already deposited?
         if entry.id in state:
             result.skipped.append(entry.id)
+            continue
+
+        # Quality gate: near-duplicate check
+        if quality_check and existing_titles:
+            dup = _check_duplicate(entry.title, existing_titles)
+            if dup:
+                msg = f"Skipped {entry.id}: near-duplicate of existing '{dup[:60]}'"
+                result.skipped.append(entry.id)
+                result.quality_skipped.append(msg)
+                continue
+
+        # Quality gate: minimum body length
+        if quality_check and len(entry.body.split()) < MIN_BODY_WORDS:
+            msg = (
+                f"Skipped {entry.id}: body too short "
+                f"({len(entry.body.split())} words, minimum {MIN_BODY_WORDS})"
+            )
+            result.skipped.append(entry.id)
+            result.quality_skipped.append(msg)
             continue
 
         # Assign next engram ID
@@ -181,6 +251,10 @@ def deposit(
 
         result.deposited.append((entry.id, engram_id))
         new_state[entry.id] = engram_id
+
+        # Track title for intra-batch duplicate detection
+        if quality_check:
+            existing_titles.append(entry.title)
 
     # Persist state
     if not dry_run and result.deposited:

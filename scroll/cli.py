@@ -510,8 +510,10 @@ def health(ctx):
               help="Engram root directory (default: ~/engram)")
 @click.option("--dry-run", is_flag=True, help="Show what would be deposited without writing")
 @click.option("--project", "-p", default=None, help="Only deposit entries from this project")
+@click.option("--quality-check/--no-quality-check", default=True, show_default=True,
+              help="Reject near-duplicate or trivial entries before writing")
 @click.pass_context
-def deposit(ctx, engram_root, dry_run, project):
+def deposit(ctx, engram_root, dry_run, project, quality_check):
     """Deposit scroll entries into engram knowledge base.
 
     Pushes extracted knowledge from scroll into engram, where it becomes
@@ -531,12 +533,22 @@ def deposit(ctx, engram_root, dry_run, project):
     if dry_run:
         click.echo("DRY RUN — no files will be written.\n")
 
-    result = do_deposit(scroll_dir, engram_root=root, dry_run=dry_run, project_filter=project)
+    result = do_deposit(
+        scroll_dir,
+        engram_root=root,
+        dry_run=dry_run,
+        project_filter=project,
+        quality_check=quality_check,
+    )
 
     if result.errors:
         for err in result.errors:
             click.echo(f"ERROR: {err}")
         sys.exit(1)
+
+    if result.quality_skipped:
+        for msg in result.quality_skipped:
+            click.echo(f"QUALITY: {msg}")
 
     if result.deposited:
         click.echo(f"Deposited {len(result.deposited)} entries into engram:")
@@ -544,7 +556,20 @@ def deposit(ctx, engram_root, dry_run, project):
             click.echo(f"  {scroll_id} → {engram_id}")
 
     if result.skipped:
-        click.echo(f"Skipped {len(result.skipped)} already-deposited entries.")
+        quality_count = len(result.quality_skipped)
+        existing_count = len(result.skipped) - quality_count
+        if quality_count and existing_count:
+            click.echo(
+                f"Skipped {existing_count} already-deposited entries and "
+                f"{quality_count} quality-gated entries."
+            )
+        elif quality_count:
+            click.echo(f"Skipped {quality_count} quality-gated entries.")
+        else:
+            click.echo(f"Skipped {existing_count} already-deposited entries.")
 
     if not result.deposited and not result.skipped:
         click.echo("No scroll entries to deposit.")
+
+    if result.quality_skipped:
+        sys.exit(1)

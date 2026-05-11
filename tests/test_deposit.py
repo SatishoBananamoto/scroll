@@ -9,6 +9,7 @@ import pytest
 
 from scroll.deposit import (
     DepositResult,
+    _check_duplicate,
     deposit,
     find_max_engram_num,
     load_deposit_state,
@@ -197,7 +198,7 @@ class TestDeposit:
         scroll_dir = setup_scroll_dir(tmp_path, [entry])
         engram = setup_engram_dir(tmp_path)
 
-        result = deposit(scroll_dir, engram_root=engram)
+        result = deposit(scroll_dir, engram_root=engram, quality_check=False)
 
         assert len(result.deposited) == 1
         assert result.deposited[0] == ("DEC-001", "DEC-001")
@@ -218,7 +219,7 @@ class TestDeposit:
             "DEC-005.md": MINIMAL_ENGRAM_ENTRY.format(id="DEC-005", type="decision"),
         })
 
-        result = deposit(scroll_dir, engram_root=engram)
+        result = deposit(scroll_dir, engram_root=engram, quality_check=False)
 
         assert result.deposited[0] == ("DEC-001", "DEC-006")
         assert (engram / "entries" / "DEC-006.md").exists()
@@ -234,7 +235,7 @@ class TestDeposit:
         scroll_dir = setup_scroll_dir(tmp_path, entries)
         engram = setup_engram_dir(tmp_path)
 
-        result = deposit(scroll_dir, engram_root=engram)
+        result = deposit(scroll_dir, engram_root=engram, quality_check=False)
 
         assert len(result.deposited) == 3
         ids = {engram_id for _, engram_id in result.deposited}
@@ -253,7 +254,7 @@ class TestDeposit:
             "DEC-010.md": MINIMAL_ENGRAM_ENTRY.format(id="DEC-010", type="decision"),
         })
 
-        result = deposit(scroll_dir, engram_root=engram)
+        result = deposit(scroll_dir, engram_root=engram, quality_check=False)
 
         assert len(result.deposited) == 2
         assert result.deposited[0] == ("DEC-001", "DEC-011")
@@ -271,7 +272,7 @@ class TestDeposit:
         # Pre-populate deposit state
         save_deposit_state(scroll_dir, {"DEC-001": "DEC-042"})
 
-        result = deposit(scroll_dir, engram_root=engram)
+        result = deposit(scroll_dir, engram_root=engram, quality_check=False)
 
         assert len(result.deposited) == 1
         assert result.deposited[0][0] == "LRN-001"
@@ -282,7 +283,7 @@ class TestDeposit:
         scroll_dir = setup_scroll_dir(tmp_path, [entry])
         engram = setup_engram_dir(tmp_path)
 
-        result = deposit(scroll_dir, engram_root=engram, dry_run=True)
+        result = deposit(scroll_dir, engram_root=engram, dry_run=True, quality_check=False)
 
         assert len(result.deposited) == 1
         # No files written
@@ -298,7 +299,7 @@ class TestDeposit:
         scroll_dir = setup_scroll_dir(tmp_path, entries)
         engram = setup_engram_dir(tmp_path)
 
-        result = deposit(scroll_dir, engram_root=engram, project_filter="alpha")
+        result = deposit(scroll_dir, engram_root=engram, project_filter="alpha", quality_check=False)
 
         assert len(result.deposited) == 1
         assert result.deposited[0][0] == "DEC-001"
@@ -308,7 +309,7 @@ class TestDeposit:
         scroll_dir = setup_scroll_dir(tmp_path, [entry])
         fake_engram = tmp_path / "nonexistent"
 
-        result = deposit(scroll_dir, engram_root=fake_engram)
+        result = deposit(scroll_dir, engram_root=fake_engram, quality_check=False)
 
         assert len(result.errors) == 1
         assert "not found" in result.errors[0]
@@ -318,7 +319,7 @@ class TestDeposit:
         (scroll_dir / "entries").mkdir(parents=True)
         engram = setup_engram_dir(tmp_path)
 
-        result = deposit(scroll_dir, engram_root=engram)
+        result = deposit(scroll_dir, engram_root=engram, quality_check=False)
 
         assert not result.deposited
         assert not result.skipped
@@ -331,11 +332,11 @@ class TestDeposit:
         engram = setup_engram_dir(tmp_path)
 
         # First deposit
-        r1 = deposit(scroll_dir, engram_root=engram)
+        r1 = deposit(scroll_dir, engram_root=engram, quality_check=False)
         assert len(r1.deposited) == 1
 
         # Second deposit — same entries
-        r2 = deposit(scroll_dir, engram_root=engram)
+        r2 = deposit(scroll_dir, engram_root=engram, quality_check=False)
         assert len(r2.deposited) == 0
         assert r2.skipped == ["DEC-001"]
 
@@ -350,7 +351,7 @@ class TestDeposit:
         scroll_dir = setup_scroll_dir(tmp_path, [entry])
         engram = setup_engram_dir(tmp_path)
 
-        deposit(scroll_dir, engram_root=engram)
+        deposit(scroll_dir, engram_root=engram, quality_check=False)
 
         # Parse with engram's own parser
         import sys
@@ -367,3 +368,90 @@ class TestDeposit:
         assert "scroll-extracted" in parsed.tags
         assert parsed.project == "scroll"
         assert parsed.confidence == "high"
+
+
+# --- Tests: quality gate ---
+
+class TestQualityGate:
+
+    def test_blocks_near_duplicate(self, tmp_path):
+        """Entry with title similar to existing engram entry should be skipped."""
+        entry = make_scroll_entry(
+            id="DEC-001",
+            title="Stale positive signals from old metadata inflate scores on abandoned packages",
+            body="## Context\n" + " ".join(["word"] * 30),  # enough words
+        )
+        scroll_dir = setup_scroll_dir(tmp_path, [entry])
+        engram = setup_engram_dir(tmp_path, {
+            "LRN-023.md": "---\nid: LRN-023\ntype: learning\ndate: 2026-03-27\ntags: [test]\nstatus: active\n---\n\n# Stale positive signals from metadata inflate scores on dead packages\n\nBody text here.\n",
+        })
+
+        result = deposit(scroll_dir, engram_root=engram, quality_check=True)
+
+        assert len(result.deposited) == 0
+        assert any("near-duplicate" in e for e in result.quality_skipped)
+        assert not result.errors
+
+    def test_blocks_short_body(self, tmp_path):
+        """Entry with very short body should be skipped."""
+        entry = make_scroll_entry(
+            id="DEC-001", title="A unique title for testing",
+            body="## Context\nShort.",  # only 2 words
+        )
+        scroll_dir = setup_scroll_dir(tmp_path, [entry])
+        engram = setup_engram_dir(tmp_path)
+
+        result = deposit(scroll_dir, engram_root=engram, quality_check=True)
+
+        assert len(result.deposited) == 0
+        assert any("too short" in e for e in result.quality_skipped)
+        assert not result.errors
+
+    def test_passes_quality_entry(self, tmp_path):
+        """Entry with sufficient body and unique title should pass."""
+        long_body = "## Context\n" + " ".join(["substantive content here"] * 10)
+        entry = make_scroll_entry(
+            id="DEC-001", title="A completely unique decision about architecture",
+            body=long_body,
+        )
+        scroll_dir = setup_scroll_dir(tmp_path, [entry])
+        engram = setup_engram_dir(tmp_path)
+
+        result = deposit(scroll_dir, engram_root=engram, quality_check=True)
+
+        assert len(result.deposited) == 1
+        assert len(result.errors) == 0
+        assert len(result.quality_skipped) == 0
+
+    def test_catches_intra_batch_duplicates(self, tmp_path):
+        """Two entries in same batch with similar titles — second should be caught."""
+        long_body = "## Context\n" + " ".join(["substantive content here"] * 10)
+        entries = [
+            make_scroll_entry(
+                id="DEC-001",
+                title="HTTP redirects can cause analyzer crashes without handling",
+                body=long_body,
+            ),
+            make_scroll_entry(
+                id="DEC-002",
+                title="HTTP redirects cause analyzer crashes without proper handling",
+                body=long_body,
+            ),
+        ]
+        scroll_dir = setup_scroll_dir(tmp_path, entries)
+        engram = setup_engram_dir(tmp_path)
+
+        result = deposit(scroll_dir, engram_root=engram, quality_check=True)
+
+        assert len(result.deposited) == 1  # first passes, second caught
+        assert any("near-duplicate" in e for e in result.quality_skipped)
+        assert not result.errors
+
+    def test_duplicate_check_normalizes_punctuation(self):
+        """Trailing punctuation should not hide near-duplicate titles."""
+        match = _check_duplicate(
+            "HTTP redirects cause analyzer crashes without proper handling",
+            ["HTTP redirects cause analyzer crashes without handling."],
+        )
+
+        assert match is not None

@@ -9,6 +9,7 @@ from unittest.mock import patch, MagicMock
 from click.testing import CliRunner
 
 from scroll.cli import cli
+from scroll.store import ScrollEntry, entry_to_markdown
 
 
 def _make_repo(num_commits=3):
@@ -51,6 +52,16 @@ MOCK_EXTRACTION = [
 
 def _mock_extract(commits_text, model="claude-sonnet-4-6"):
     return MOCK_EXTRACTION
+
+
+def _write_scroll_entry(repo: Path, entry: ScrollEntry):
+    entries_dir = repo / ".scroll" / "entries"
+    entries_dir.mkdir(parents=True, exist_ok=True)
+    (entries_dir / f"{entry.id}.md").write_text(entry_to_markdown(entry), encoding="utf-8")
+
+
+def _long_body():
+    return "## Context\n" + " ".join(["substantive content here"] * 10)
 
 
 def test_init_creates_directory():
@@ -171,3 +182,69 @@ def test_api_failure_saves_nothing_gracefully(mock_extract):
 
     result = runner.invoke(cli, ["-r", str(repo), "ingest"])
     assert "failed" in result.output.lower() or "Extraction failed" in result.output
+
+
+def test_deposit_cli_reports_quality_gate_without_mislabeling(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    engram = tmp_path / "engram"
+    (engram / "entries").mkdir(parents=True)
+
+    entry = ScrollEntry(
+        id="DEC-001",
+        type="decision",
+        date="2026-03-30",
+        title="Stale positive signals from old metadata inflate scores on abandoned packages",
+        tags=["quality"],
+        body=_long_body(),
+        confidence="high",
+        source_commits=["abc1234"],
+        project="scroll",
+    )
+    _write_scroll_entry(repo, entry)
+    (engram / "entries" / "LRN-023.md").write_text(
+        "---\nid: LRN-023\ntype: learning\ndate: 2026-03-27\n"
+        "tags: [test]\nstatus: active\n---\n\n"
+        "# Stale positive signals from metadata inflate scores on dead packages\n\n"
+        "Body text here.\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["-r", str(repo), "deposit", "--engram-root", str(engram)])
+
+    assert result.exit_code == 1
+    assert "QUALITY: Skipped DEC-001: near-duplicate" in result.output
+    assert "Skipped 1 quality-gated entries." in result.output
+    assert "already-deposited" not in result.output
+    assert not (engram / "entries" / "DEC-001.md").exists()
+
+
+def test_deposit_cli_can_disable_quality_check(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    engram = tmp_path / "engram"
+    (engram / "entries").mkdir(parents=True)
+
+    entry = ScrollEntry(
+        id="DEC-001",
+        type="decision",
+        date="2026-03-30",
+        title="Short deliberate backfill",
+        tags=["quality"],
+        body="## Context\nShort.",
+        confidence="high",
+        source_commits=["abc1234"],
+        project="scroll",
+    )
+    _write_scroll_entry(repo, entry)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["-r", str(repo), "deposit", "--engram-root", str(engram), "--no-quality-check"],
+    )
+
+    assert result.exit_code == 0
+    assert "Deposited 1 entries into engram:" in result.output
+    assert (engram / "entries" / "DEC-001.md").exists()

@@ -16,6 +16,9 @@ scroll ingest -n 20 -p my-project
 # Deposit into engram knowledge base
 scroll deposit -p my-project
 
+# Deposit without the quality gate for deliberate legacy backfills
+scroll deposit -p my-project --no-quality-check
+
 # Sync into CLAUDE.md for agent context
 scroll sync -t claude
 ```
@@ -48,7 +51,7 @@ Scroll extracts:
 |---------|-------------|
 | `scroll init` | Initialize scroll in a repo |
 | `scroll ingest` | Extract knowledge from git/GitHub |
-| `scroll deposit` | Push entries into engram |
+| `scroll deposit` | Push entries into engram, rejecting likely duplicates and trivial entries by default |
 | `scroll sync` | Inject knowledge into CLAUDE.md |
 | `scroll list` | List extracted entries |
 | `scroll search` | Search entries by text |
