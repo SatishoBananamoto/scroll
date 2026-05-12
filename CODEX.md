@@ -4,14 +4,32 @@
 > Updated before every commit. Single source of truth for this project.
 
 **Current version**: v0.1.0 (on PyPI as `git-scroll`)
-**Last session**: 2026-05-11 — deposit quality gate hardened
-**Repo**: Ready to commit. 129 tests passing.
+**Last session**: 2026-05-12 — deterministic extraction verification wired
+**Repo**: Ready to commit. 134 tests passing.
 
 ---
 
 ## NEXT SESSION — START HERE
 
-### What just happened (2026-05-11 — Codex quality-gate pass)
+### What just happened (2026-05-12 — Codex extraction-verification pass)
+
+**Deterministic extraction verification is now wired into ingest.** After each
+LLM extraction batch, scroll checks that every extracted entry cites source refs
+that are present in the source batch. Entries with fabricated or mismatched
+commit/PR/issue refs are skipped before `save_entries()`. Entries with very low
+lexical overlap are accepted but reported as warnings so deeper review can
+inspect likely weak grounding without blocking valid summaries.
+
+Why: REVIEW.md identified unverified extraction as the load-bearing risk. This
+does not replace a live LLM re-prompt verifier, but it closes the mechanical
+grounding gap that can be proven locally and gives the future verifier a stable
+module to build on.
+
+Verification: `python3 -B -m pytest -q -p no:cacheprovider` passed with 134
+tests, `python3 -B -m compileall scroll tests` passed, and `git diff --check`
+passed.
+
+Previous session (2026-05-11 — Codex quality-gate pass):
 
 **Deposit quality gate hardened.** Scroll deposits now check for:
 1. Near-duplicates against existing engram entries (Jaccard word similarity ≥ 70%)
@@ -46,9 +64,9 @@ REVIEW.md (grade B) identified the core weakness: LLM extraction is unverified. 
 
 _LLM extraction hallucinations go undetected. The core value proposition is unverified._
 
-- [ ] Design verification approach — re-prompt check vs. known-output regression vs. both
-- [ ] Build verification module — check N entries per batch against source material
-- [ ] Add extraction regression test — known commits → expected entries
+- [x] Design verification approach — deterministic source-ref gate first; live re-prompt verifier remains future work
+- [x] Build verification module — check batch source refs before saving extracted entries
+- [x] Add extraction regression test — known commits → expected source-ref grounding behavior
 - [ ] Run verification on existing scroll-extracted entries across projects
 - [ ] Update REVIEW.md with findings
 - [ ] Continue
@@ -88,6 +106,7 @@ _Scroll is engram's extraction layer, not a standalone product._
 - [x] CI: run tests on push and PR — `commit:f44dea2`
 - [x] README added — `commit:76bc8c3`
 - [x] Deposit quality gate hardened — 129 tests passing
+- [x] Deterministic extraction source-ref verification — 134 tests passing
 
 </details>
 
@@ -123,6 +142,13 @@ _Scroll is engram's extraction layer, not a standalone product._
 - **Worked on:** PyPI release, README, CI, CLAUDE.md self-extraction
 - **Completed:** v0.1.0 on PyPI, CI green, README written
 - **State:** Shipped. 122 tests. Next: extraction verification.
+
+### 2026-05-12 — Codex extraction-verification pass
+
+- **Worked on:** Local verification of extracted entries against the source batch
+- **Completed:** `scroll.verification`, ingest wiring for commits/PRs/issues, source-ref rejection, low-overlap warnings, and regression tests
+- **Why:** LLM extraction could cite refs that were not present in the batch; that grounding failure is deterministic and should be caught before saving
+- **State:** 134 tests passing. Next: live re-prompt verifier or audit existing extracted entries.
 
 ---
 

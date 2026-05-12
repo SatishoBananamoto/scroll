@@ -6,6 +6,8 @@ Your codebase already knows. Scroll extracts it.
 
 Scroll reads git history, GitHub PRs, and issues, then uses LLM-powered extraction to produce structured knowledge entries: decisions, learnings, mistakes, observations, goals. These feed into [engram](https://github.com/SatishoBananamoto/engram) and agent instruction files (CLAUDE.md).
 
+During ingest, Scroll verifies extracted source references against the current source batch before saving. Entries that cite absent commit/PR/issue refs are skipped; weakly grounded entries produce warnings for review.
+
 ```bash
 # Initialize in your repo
 scroll init

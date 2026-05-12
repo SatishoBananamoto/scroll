@@ -1,6 +1,7 @@
 """Integration tests for scroll CLI."""
 
 import json
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -51,7 +52,19 @@ MOCK_EXTRACTION = [
 
 
 def _mock_extract(commits_text, model="claude-sonnet-4-6"):
-    return MOCK_EXTRACTION
+    source_refs = re.findall(r"\[([0-9a-f]{7,40})\]", commits_text)
+    entries = []
+    for index, entry in enumerate(MOCK_EXTRACTION):
+        copied = dict(entry)
+        copied["source_commits"] = [source_refs[index % len(source_refs)]]
+        entries.append(copied)
+    return entries
+
+
+def _mock_unverified_extract(commits_text, model="claude-sonnet-4-6"):
+    entry = dict(MOCK_EXTRACTION[0])
+    entry["source_commits"] = ["deadbeef"]
+    return [entry]
 
 
 def _write_scroll_entry(repo: Path, entry: ScrollEntry):
@@ -182,6 +195,20 @@ def test_api_failure_saves_nothing_gracefully(mock_extract):
 
     result = runner.invoke(cli, ["-r", str(repo), "ingest"])
     assert "failed" in result.output.lower() or "Extraction failed" in result.output
+
+
+@patch("scroll.cli.extract_knowledge", side_effect=_mock_unverified_extract)
+def test_ingest_skips_unverified_source_refs(mock_extract):
+    repo = _make_repo(3)
+    runner = CliRunner()
+    runner.invoke(cli, ["-r", str(repo), "init"])
+
+    result = runner.invoke(cli, ["-r", str(repo), "ingest"])
+
+    assert result.exit_code == 0
+    assert "skipped (unverified)" in result.output
+    assert "Skipped 1 invalid entries." in result.output
+    assert not any((repo / ".scroll" / "entries").glob("*.md"))
 
 
 def test_deposit_cli_reports_quality_gate_without_mislabeling(tmp_path):

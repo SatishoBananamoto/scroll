@@ -10,6 +10,7 @@ from scroll.extractor import extract_knowledge
 from scroll.store import save_entries, load_entries
 from scroll.state import get_last_commit, get_processed_commits, update_state
 from scroll.query import search, filter_by_type, filter_by_tag
+from scroll.verification import verify_extractions
 
 SCROLL_DIR = ".scroll"
 
@@ -150,6 +151,9 @@ def _ingest_commits(repo, scroll_dir, existing, project, model, max_commits, bat
 
         click.echo(f"    -> {len(entries)} entries extracted")
 
+        entries, unverified = _verify_extracted_entries(entries, batch_text)
+        total_invalid += unverified
+
         saved, invalid, duplicate = save_entries(entries, scroll_dir, project, existing)
         total_saved += len(saved)
         total_invalid += len(invalid)
@@ -217,6 +221,9 @@ def _ingest_github(repo, scroll_dir, existing, project, model, max_prs, max_issu
 
             click.echo(f"    -> {len(entries)} entries extracted")
 
+            entries, unverified = _verify_extracted_entries(entries, batch_text)
+            total_invalid += unverified
+
             saved, invalid, duplicate = save_entries(entries, scroll_dir, project, existing)
             total_saved += len(saved)
             total_invalid += len(invalid)
@@ -255,6 +262,9 @@ def _ingest_github(repo, scroll_dir, existing, project, model, max_prs, max_issu
 
             click.echo(f"    -> {len(entries)} entries extracted")
 
+            entries, unverified = _verify_extracted_entries(entries, batch_text)
+            total_invalid += unverified
+
             saved, invalid, duplicate = save_entries(entries, scroll_dir, project, existing)
             total_saved += len(saved)
             total_invalid += len(invalid)
@@ -268,6 +278,16 @@ def _ingest_github(repo, scroll_dir, existing, project, model, max_prs, max_issu
     return total_saved, total_invalid, total_duplicate
 
 
+def _verify_extracted_entries(entries: list[dict], batch_text: str) -> tuple[list[dict], int]:
+    """Verify extracted entries and report source-grounding issues."""
+    verification = verify_extractions(entries, batch_text)
+
+    if verification.rejected:
+        click.echo(f"    -> {len(verification.rejected)} skipped (unverified)")
+    if verification.warnings:
+        click.echo(f"    -> {len(verification.warnings)} verification warning(s)")
+
+    return verification.accepted, len(verification.rejected)
 
 
 @cli.command("list")
