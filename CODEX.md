@@ -4,8 +4,8 @@
 > Updated before every commit. Single source of truth for this project.
 
 **Current version**: v0.1.0 (on PyPI as `git-scroll`)
-**Last session**: 2026-07-03 — public CI and license repair
-**Repo**: Ready to commit. 134 tests passing.
+**Last session**: 2026-07-03 — public CI, license, and clean-runner repair
+**Repo**: Clean and pushed to origin/main. 134 tests passing locally; GitHub Actions green.
 
 ---
 
@@ -27,6 +27,7 @@ tests, `python3 -B -m compileall scroll tests` passed, `git diff --check`
 passed, and editable package metadata/install succeeded in a throwaway venv
 with `pip install -e . --no-deps --no-build-isolation`. The clean-CI path was
 simulated with `HOME=/tmp/codex-no-engram`, where the engram parser test skips.
+GitHub Actions passed on Python 3.11 and 3.12 after the fix.
 
 Previous session (2026-05-12 — Codex extraction-verification pass):
 
@@ -172,7 +173,7 @@ _Scroll is engram's extraction layer, not a standalone product._
 
 - **Worked on:** Keep `scroll` public-worthy after repo review.
 - **Completed:** Fixed GitHub Actions install command, added MIT LICENSE, added package readme/license metadata, and isolated the optional engram parser compatibility test from clean public CI.
-- **State:** 134 tests passing locally; clean-CI no-engram path skips the external parser test; editable install metadata verified in `/tmp` venv. Next: commit/push and confirm GitHub Actions.
+- **State:** Clean and pushed to `origin/main`; 134 tests passing locally; GitHub Actions green on Python 3.11 and 3.12.
 
 ---
 
