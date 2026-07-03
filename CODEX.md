@@ -4,14 +4,28 @@
 > Updated before every commit. Single source of truth for this project.
 
 **Current version**: v0.1.0 (on PyPI as `git-scroll`)
-**Last session**: 2026-05-12 — deterministic extraction verification wired
+**Last session**: 2026-07-03 — public CI and license repair
 **Repo**: Ready to commit. 134 tests passing.
 
 ---
 
 ## NEXT SESSION — START HERE
 
-### What just happened (2026-05-12 — Codex extraction-verification pass)
+### What just happened (2026-07-03 — Codex public-readiness pass)
+
+**Public CI and license metadata were repaired.** GitHub Actions used the
+invalid command `pip install pytest pip install -e .`, so public runs failed
+before pytest started. The workflow now upgrades pip and installs pytest plus
+editable scroll in separate valid steps. README already claimed MIT license,
+but the repo had no LICENSE file and GitHub reported no license; an MIT
+LICENSE file and package `readme`/`license` metadata are now present.
+
+Verification: `python3 -B -m pytest -q -p no:cacheprovider` passed with 134
+tests, `python3 -B -m compileall scroll tests` passed, `git diff --check`
+passed, and editable package metadata/install succeeded in a throwaway venv
+with `pip install -e . --no-deps --no-build-isolation`.
+
+Previous session (2026-05-12 — Codex extraction-verification pass):
 
 **Deterministic extraction verification is now wired into ingest.** After each
 LLM extraction batch, scroll checks that every extracted entry cites source refs
@@ -107,6 +121,7 @@ _Scroll is engram's extraction layer, not a standalone product._
 - [x] README added — `commit:76bc8c3`
 - [x] Deposit quality gate hardened — 129 tests passing
 - [x] Deterministic extraction source-ref verification — 134 tests passing
+- [x] Public CI/license repair — 2026-07-03 — valid install workflow, MIT LICENSE, pyproject readme/license metadata, 134 tests passing
 
 </details>
 
@@ -149,6 +164,12 @@ _Scroll is engram's extraction layer, not a standalone product._
 - **Completed:** `scroll.verification`, ingest wiring for commits/PRs/issues, source-ref rejection, low-overlap warnings, and regression tests
 - **Why:** LLM extraction could cite refs that were not present in the batch; that grounding failure is deterministic and should be caught before saving
 - **State:** 134 tests passing. Next: live re-prompt verifier or audit existing extracted entries.
+
+### 2026-07-03 — Codex public-readiness pass
+
+- **Worked on:** Keep `scroll` public-worthy after repo review.
+- **Completed:** Fixed GitHub Actions install command, added MIT LICENSE, and added package readme/license metadata.
+- **State:** 134 tests passing locally; editable install metadata verified in `/tmp` venv. Next: commit/push and confirm GitHub Actions.
 
 ---
 
