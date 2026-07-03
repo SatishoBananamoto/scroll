@@ -355,7 +355,11 @@ class TestDeposit:
 
         # Parse with engram's own parser
         import sys
-        sys.path.insert(0, str(Path.home() / "engram"))
+        engram_checkout = Path.home() / "engram"
+        if not (engram_checkout / "tools" / "parser.py").exists():
+            pytest.skip("engram checkout is not available")
+
+        sys.path.insert(0, str(engram_checkout))
         from tools.parser import parse_entry
 
         written = engram / "entries" / "DEC-001.md"

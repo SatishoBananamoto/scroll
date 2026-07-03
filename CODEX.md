@@ -19,11 +19,14 @@ before pytest started. The workflow now upgrades pip and installs pytest plus
 editable scroll in separate valid steps. README already claimed MIT license,
 but the repo had no LICENSE file and GitHub reported no license; an MIT
 LICENSE file and package `readme`/`license` metadata are now present.
+The engram parser compatibility test now skips when the sibling engram checkout
+is unavailable, so public CI does not require private/local workspace state.
 
 Verification: `python3 -B -m pytest -q -p no:cacheprovider` passed with 134
 tests, `python3 -B -m compileall scroll tests` passed, `git diff --check`
 passed, and editable package metadata/install succeeded in a throwaway venv
-with `pip install -e . --no-deps --no-build-isolation`.
+with `pip install -e . --no-deps --no-build-isolation`. The clean-CI path was
+simulated with `HOME=/tmp/codex-no-engram`, where the engram parser test skips.
 
 Previous session (2026-05-12 — Codex extraction-verification pass):
 
@@ -121,7 +124,7 @@ _Scroll is engram's extraction layer, not a standalone product._
 - [x] README added — `commit:76bc8c3`
 - [x] Deposit quality gate hardened — 129 tests passing
 - [x] Deterministic extraction source-ref verification — 134 tests passing
-- [x] Public CI/license repair — 2026-07-03 — valid install workflow, MIT LICENSE, pyproject readme/license metadata, 134 tests passing
+- [x] Public CI/license repair — 2026-07-03 — valid install workflow, MIT LICENSE, pyproject readme/license metadata, external engram parser test isolated, 134 tests passing
 
 </details>
 
@@ -168,8 +171,8 @@ _Scroll is engram's extraction layer, not a standalone product._
 ### 2026-07-03 — Codex public-readiness pass
 
 - **Worked on:** Keep `scroll` public-worthy after repo review.
-- **Completed:** Fixed GitHub Actions install command, added MIT LICENSE, and added package readme/license metadata.
-- **State:** 134 tests passing locally; editable install metadata verified in `/tmp` venv. Next: commit/push and confirm GitHub Actions.
+- **Completed:** Fixed GitHub Actions install command, added MIT LICENSE, added package readme/license metadata, and isolated the optional engram parser compatibility test from clean public CI.
+- **State:** 134 tests passing locally; clean-CI no-engram path skips the external parser test; editable install metadata verified in `/tmp` venv. Next: commit/push and confirm GitHub Actions.
 
 ---
 
